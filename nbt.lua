@@ -360,11 +360,20 @@ function module.stringReader(str)
     end
 end
 
-function module.decode(payload)
+function module.decode(payload, noRootName)
     local reader = module.stringReader(payload)
 
     local rootID = sunpack('b', reader(1))
-    local rootName = module.TAGS[module.TAGS.STRING].decode(reader)
+    local rootName
+    if noRootName then
+        rootName = {
+            _type = module.TAGS.STRING,
+            value = ''
+        }
+    else
+        rootName = module.TAGS[module.TAGS.STRING].decode(reader)
+    end
+    
     local tag = module.TAGS[rootID]
     if not tag then
         error('Unknown root tag ID: ' .. rootID)
