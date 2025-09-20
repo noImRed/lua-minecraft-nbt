@@ -4,7 +4,7 @@ package       = "nbt"
 version       = "0.1.1-1"
 
 source = {
-  url = "https://github.com/noImRed/lua-minecraft-nbt.git",
+  url = "https://github.com/noImRed/lua-minecraft-nbt",
   tag = "v0.1.1",
 }
 
