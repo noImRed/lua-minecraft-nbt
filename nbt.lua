@@ -1,6 +1,6 @@
 local module = {}
 
-local spack, sunpack, schar, sbyte, srep = string.pack, string.unpack, string.char, string.byte, string.rep
+local spack, sunpack = string.pack, string.unpack
 local ssub = string.sub
 
 function module.getValue(obj)
@@ -71,7 +71,6 @@ module.TAGS[module.TAGS.LONG] = {
         return {
             _type = module.TAGS.LONG,
             value = sunpack('>l', reader(8))
-            -- note: potential precision issues with values. this also applies to int, float, and double
         }
     end,
     encode = function (obj)
@@ -112,7 +111,7 @@ module.TAGS[module.TAGS.BYTE_ARRAY] = {
         local t = {}
     
         for i = 1, size do
-            t[i] = sbyte(reader(1))
+            t[i] = sunpack('b', reader(1))
         end
     
         return {
@@ -128,7 +127,7 @@ module.TAGS[module.TAGS.BYTE_ARRAY] = {
         }
 
         for i = 1, size do
-            parts[#parts+1] = schar(array[i])
+            parts[#parts+1] = spack('b', array[i])
         end
         
         return table.concat(parts)
@@ -239,7 +238,7 @@ module.TAGS[module.TAGS.COMPOUND] = {
         local parts = {}
 
         for name, itemWrapper in pairs(compound) do
-            --- note: in compound tags, index are always strings
+            --- note: in compound tags, index are always string
             if type(name) ~= "string" then error("NBT Compound key must be a string") end
             if type(itemWrapper) ~= "table" or not itemWrapper._type or itemWrapper.value == nil then
                 error("Invalid item data in compound for key '" .. name .. "'. Expected NBT wrapper.")
@@ -264,15 +263,15 @@ module.TAGS[module.TAGS.COMPOUND] = {
 module.TAGS[module.TAGS.INT_ARRAY] = {
     decode = function (reader)
         local len = module.TAGS[module.TAGS.INT].decode(reader).value
-        --local t = {}
+        local t = {}
     
-        --for i = 1, len do
-        --    t[i] = module.TAGS[module.TAGS.INT].decode(reader).value
-        --end
+        for i = 1, len do
+            t[i] = module.TAGS[module.TAGS.INT].decode(reader).value
+        end
     
-        local raw = reader(len * 4) -- each INT allocates 4 bytes
-        local unpackPattern = srep('>i4', len)
-        local t = {sunpack(unpackPattern, raw)}
+        --local raw = reader(len * 4) -- each INT allocates 4 bytes
+        --local unpackPattern = srep('>i4', len)
+        --local t = {sunpack(unpackPattern, raw)}
 
         return {
             _type = module.TAGS.INT_ARRAY,
@@ -286,12 +285,12 @@ module.TAGS[module.TAGS.INT_ARRAY] = {
             module.TAGS[module.TAGS.INT].encode(size)
         }
 
-        --for i = 1, size do
-        --    parts[#parts+1] = module.TAGS[module.TAGS.INT].encode(array[i])
-        --end
-        if size > 0 then
-            parts[#parts+1] = spack(srep('>i4', size), unpack(array))
+        for i = 1, size do
+            parts[#parts+1] = module.TAGS[module.TAGS.INT].encode(array[i])
         end
+        --if size > 0 then
+        --    parts[#parts+1] = spack(srep('>i4', size), unpack(array))
+        --end
 
         return table.concat(parts)
     end
@@ -301,15 +300,15 @@ module.TAGS[module.TAGS.INT_ARRAY] = {
 module.TAGS[module.TAGS.LONG_ARRAY] = {
     decode = function (reader)
         local len = module.TAGS[module.TAGS.INT].decode(reader).value
-        --local t = {}
+        local t = {}
     
-        --for i = 1, len do
-        --    t[i] = module.TAGS[module.TAGS.LONG].decode(reader).value
-        --end
+        for i = 1, len do
+            t[i] = module.TAGS[module.TAGS.LONG].decode(reader).value
+        end
     
-        local raw = reader(len * 8) -- each LONG allocates 8 bytes
-        local unpackPattern = srep('>l', len)
-        local t = {sunpack(unpackPattern, raw)}
+        --local raw = reader(len * 8) -- each LONG allocates 8 bytes
+        --local unpackPattern = srep('>l', len)
+        --local t = {sunpack(unpackPattern, raw)}
 
         return {
             _type = module.TAGS.LONG_ARRAY,
@@ -323,9 +322,13 @@ module.TAGS[module.TAGS.LONG_ARRAY] = {
             module.TAGS[module.TAGS.INT].encode(size)
         }
         
-        if size > 0 then
-            parts[#parts+1] = spack(srep('>l', size), unpack(array))
+
+        for i = 1, size do
+            parts[#parts+1] = module.TAGS[module.TAGS.LONG].encode(array[i])
         end
+        --if size > 0 then
+        --    parts[#parts+1] = spack(srep('>l', size), unpack(array))
+        --end
 
         return table.concat(parts)
     end
@@ -360,20 +363,23 @@ function module.stringReader(str)
     end
 end
 
-function module.decode(payload, noRootName)
+function module.decodeNetwork(reader)
+    local rootID = sunpack('b', reader(1))
+    local tag = module.TAGS[rootID]
+    if not tag then
+        error('Unknown root tag ID: ' .. rootID)
+    end
+
+    local rootData = tag.decode(reader)
+
+    return rootData
+end
+
+function module.decode(payload)
     local reader = module.stringReader(payload)
 
     local rootID = sunpack('b', reader(1))
-    local rootName
-    if noRootName then
-        rootName = {
-            _type = module.TAGS.STRING,
-            value = ''
-        }
-    else
-        rootName = module.TAGS[module.TAGS.STRING].decode(reader)
-    end
-    
+    local rootName = module.TAGS[module.TAGS.STRING].decode(reader)
     local tag = module.TAGS[rootID]
     if not tag then
         error('Unknown root tag ID: ' .. rootID)
@@ -391,7 +397,7 @@ end
 function module.encode(rootNameInput, rootDataWrapper)
     local root_name_str
 
-    -- 1. process the root tag name
+    -- 1. Handling root tag name
     if type(rootNameInput) == "table" and rootNameInput._type == module.TAGS.STRING and rootNameInput.value ~= nil then
         root_name_str = rootNameInput.value
     elseif type(rootNameInput) == "string" then
@@ -400,7 +406,7 @@ function module.encode(rootNameInput, rootDataWrapper)
         error("Root name must be a string or a TAG_String wrapper { _type = TAGS.STRING, value = 'name' }.")
     end
 
-    -- 2. validate root data
+    -- 2. Checking root data
     if type(rootDataWrapper) ~= "table" or
        type(rootDataWrapper._type) ~= "number" or
        rootDataWrapper.value == nil then -- value can be {} for empty list/compound
@@ -409,7 +415,7 @@ function module.encode(rootNameInput, rootDataWrapper)
     
     local root_tag_id = rootDataWrapper._type
 
-    -- 3. get the encoder function for the root tag payload
+    -- 3. Getting encoder function for root tag payload
     local payload_encoder_fn
     if module.TAGS[root_tag_id] and module.TAGS[root_tag_id].encode then
         payload_encoder_fn = module.TAGS[root_tag_id].encode
@@ -418,30 +424,25 @@ function module.encode(rootNameInput, rootDataWrapper)
     end
 
     local parts = {
-        -- tag id
+        -- id tag
         module.TAGS[module.TAGS.BYTE].encode(root_tag_id)
     }
 
-    --- in Minecraft versions 1.20.2+, changes occurred in the root compound tag
-    --- the root compound now lacks a name but its ID remains
-    --- this applies only to the root compound when sending packets. other tags, including nested compounds, retain the old structure
+    -- on newer Minecraft versions
+    -- nbt doesn't have root tag name
     if root_name_str ~= nil then
         parts[#parts+1] = module.TAGS[module.TAGS.STRING].encode({value = root_name_str})
     end
 
-
-    -- write root tag payload
-    -- the payload_encoder_fn expects a rootDataWrapper (for complex types)
-    -- or could use module.getValue (for primitive types, if they could be roots,
-    -- but rootDataWrapper will always be a wrapper based on the check above)
     parts[#parts+1] = payload_encoder_fn(rootDataWrapper)
 
     return table.concat(parts)
 end
 
 -- SNBT support
+-- SNBT parser implementation inside nbt module
 
--- helper function for error reporting with position information
+-- Helper function for error reporting with position
 local function snbtError(msg, pos, input)
     local lineNumber = 1
     local column = 1
@@ -456,7 +457,7 @@ local function snbtError(msg, pos, input)
     error(string.format("SNBT parse error at line %d, column %d: %s", lineNumber, column, msg))
 end
 
--- tokenizer for SNBT string
+-- Tokenizer for SNBT string
 local function snbtTokenize(input)
     local pos = 1
     local len = #input
@@ -484,7 +485,7 @@ local function snbtTokenize(input)
             return nil
         end
         
-        local chars = {}
+        local chars = {} -- use table for collecting characters
         local i = pos + 1
         local escaped = false
         local charCount = 0
@@ -499,9 +500,9 @@ local function snbtTokenize(input)
                     charCount = charCount + 1; chars[charCount] = "\r"
                 elseif c == "t" then
                     charCount = charCount + 1; chars[charCount] = "\t"
-                -- add other escape characters as needed
-                -- but SNBT is usually limited to \\, \", \', and \n, \r, \t.
-                else -- for \\, \", \', and other non-special characters after \
+                -- add other escape characters if needed (e.g., \uXXXX for unicode)
+                -- but SNBT most often limits to \\, \", \' and \\n, \\r, \\t.
+                else -- for \\, \", \' and other non-special characters after \
                     charCount = charCount + 1; chars[charCount] = c
                 end
                 escaped = false
@@ -509,7 +510,7 @@ local function snbtTokenize(input)
                 escaped = true
             elseif c == quote then
                 pos = i + 1
-                return table.concat(chars)
+                return table.concat(chars) -- concatenate once
             else
                 charCount = charCount + 1; chars[charCount] = c
             end
@@ -577,24 +578,22 @@ local function snbtTokenize(input)
     }
 end
 
--- function to parse SNBT string
+-- function for parsing SNBT string
 function module.decodeSNBT(input)
     local tokens = snbtTokenize(input)
     
-    -- forward declarations for mutually recursive functions
     local parseValue
     local parseCompound
     local parseList
     
-    -- parsing compound tag
     parseCompound = function()
         local values = {}
 
-        -- the opening '{' is consumed by parseValue before calling parseCompound
-        -- so the first token peeked here is either the first key or '}' for empty compound
+        -- the opening '{' is consumed by parseValue before calling parseCompound.
+        -- so, the first token peeked here is either the first key or '}' for empty compound.
 
         if tokens.peekToken() == "}" then -- handles empty compound {}
-            tokens.nextToken() -- consume '}'
+            tokens.nextToken() -- Consume '}'
             return {
                 _type = module.TAGS.COMPOUND,
                 value = values
@@ -615,18 +614,18 @@ function module.decodeSNBT(input)
             local value = parseValue()
             values[keyToken] = value
             
-            local separator = tokens.peekToken() -- peek for separator
+            local separator = tokens.peekToken() -- Peek for separator
             if separator == "}" then
-                tokens.nextToken() -- consume '}'
-                break -- end of compound
+                tokens.nextToken() -- Consume '}'
+                break -- End of compound
             elseif separator == "," or separator == ";" then
-                tokens.nextToken() -- consume the separator
-                -- handle trailing comma: if next is '}', then it's a trailing comma
+                tokens.nextToken() -- Consume the separator
+                -- Handle trailing comma: if next is '}', then it's a trailing comma.
                 if tokens.peekToken() == "}" then
-                    tokens.nextToken() -- consume '}'
+                    tokens.nextToken() -- Consume '}'
                     break
                 end
-                -- else, continue loop for next key-value pair
+                -- Else, continue loop for next key-value pair
             else
                 snbtError("Expected ',' or ';' or '}' after value for key '" .. keyToken .. "'", tokens.getPos(), input)
             end
@@ -637,26 +636,24 @@ function module.decodeSNBT(input)
             value = values
         }
     end
-
-    -- parsing list tag
     parseList = function()
-        -- the opening '[' is consumed by parseValue before calling parseList
-        -- so the first token peeked here is either the first element or ']' for empty list
+        -- The opening '[' is consumed by parseValue before calling parseList.
+        -- So, the first token peeked here is either the first element or ']' for empty list.
         
-        -- check for empty list immediately
+        -- Check for empty list immediately
         if tokens.peekToken() == "]" then
-            tokens.nextToken() -- consume ']'
+            tokens.nextToken() -- Consume ']'
             return {
                 _type = module.TAGS.LIST,
-                _itemID = module.TAGS.END, -- correct for empty list type
+                _itemID = module.TAGS.END, -- Correct for empty list type
                 value = {}
             }
         end
 
-        -- check for specialized arrays (B; I; L;)
+        -- Check for specialized arrays (B; I; L;)
         local potentialArrayType = tokens.peekToken()
         if potentialArrayType == "B" or potentialArrayType == "I" or potentialArrayType == "L" then
-            tokens.nextToken() -- consume B/I/L
+            tokens.nextToken() -- Consume B/I/L
             local sep = tokens.nextToken()
             if sep ~= ";" then
                 snbtError("Expected ';' after array type for specialized array", tokens.getPos(), input)
@@ -669,9 +666,9 @@ function module.decodeSNBT(input)
             end
 
             local arrayValues = {}
-            -- check for empty array like [B;] or [I;] or [L;]
+            -- Check for empty array like [B;] or [I;] or [L;]
             if tokens.peekToken() == "]" then
-                tokens.nextToken() -- consume ']'
+                tokens.nextToken() -- Consume ']'
             else
                 while true do
                     local numToken = tokens.nextToken()
@@ -679,8 +676,8 @@ function module.decodeSNBT(input)
                         snbtError("Unexpected end of input inside array", tokens.getPos(), input)
                     end
                     
-                    -- parse the numeric value. The tokenizer already returned the number string
-                    -- remove potential suffixes for tonumber if any are present (e.g., 1.0f -> 1.0)
+                    -- parse numeric value. Tokenizer already returned number string.
+                    -- remove possible suffixes for tonumber if present (e.g., 1.0f -> 1.0)
                     local num_str = numToken:match("^[%-%+]?%d+%.?%d*")
                     local value = tonumber(num_str)
                     if value == nil then
@@ -703,25 +700,25 @@ function module.decodeSNBT(input)
             local values = {}
             local itemType = nil
             
-            -- parse the first element (parseValue consumes it)
+            -- parse first element (parseValue consumes it)
             local value = parseValue()
             table.insert(values, value)
             itemType = value._type
             
             -- parse remaining elements
             while true do
-                local separator = tokens.peekToken() -- peek to check for trailing comma scenario
+                local separator = tokens.peekToken() -- Peek to check for trailing comma scenario
                 if separator == "]" then
-                    tokens.nextToken() -- consume ']'
-                    break -- end of list
+                    tokens.nextToken() -- Consume ']'
+                    break -- End of list
                 elseif separator == "," or separator == ";" then
-                    tokens.nextToken() -- consume the separator
-                    -- now check if this was a trailing separator
+                    tokens.nextToken() -- Consume the separator
+                    -- Now, check if this was a trailing separator
                     if tokens.peekToken() == "]" then
-                        tokens.nextToken() -- consume ']'
+                        tokens.nextToken() -- Consume ']'
                         break
                     end
-                    -- if not a trailing separator, parse the next value
+                    -- If not a trailing separator, parse the next value
                     local nextValue = parseValue()
                     if nextValue._type ~= itemType then
                         snbtError("Inconsistent list type", tokens.getPos(), input)
@@ -740,7 +737,7 @@ function module.decodeSNBT(input)
         end
     end
     
-    -- parsing a primitive value from a token
+    -- parsing primitive value from token
     local function parseValueFromToken(token)
         if token == "{" then
             return parseCompound()
@@ -762,7 +759,6 @@ function module.decodeSNBT(input)
             local is_numeric = false
             local nbt_type
             
-            -- check suffixes
             if suffix:lower() == "b" then
                 num_val = tonumber(token:sub(1, -2))
                 nbt_type = module.TAGS.BYTE
@@ -789,14 +785,14 @@ function module.decodeSNBT(input)
                 return { _type = nbt_type, value = num_val }
             end
         
-            -- if no suffix was present or the suffix was not recognized as numeric
+            -- if no suffix or suffix not recognized as numeric
             -- check for default numeric types (int/double)
             local is_int_format = token:match("^[%-%+]?%d+$")
             local is_double_format = token:match("^[%-%+]?%d+%.%d*$")
         
             if is_int_format then
                 num_val = tonumber(token)
-                if num_val ~= nil then -- Check for successful conversion
+                if num_val ~= nil then -- check for successful conversion
                     return { _type = module.TAGS.INT, value = num_val }
                 end
             elseif is_double_format then
@@ -806,7 +802,6 @@ function module.decodeSNBT(input)
                 end
             end
             
-            -- if none of the above cases applied its a string
             return { _type = module.TAGS.STRING, value = token }
         else
             snbtError("Unexpected token: " .. tostring(token), tokens.getPos(), input)
@@ -823,15 +818,14 @@ function module.decodeSNBT(input)
         return parseValueFromToken(token)
     end
     
-    -- parsing the root tag
     local rootTag = parseValue()
 
-    -- ensure no trailing tokens after parsing the root
+    -- Ensure no trailing tokens after parsing the root
     if tokens.peekToken() ~= nil then
         snbtError("Trailing data after root tag", tokens.getPos(), input)
     end
     
-    -- in SNBT the root tag often does not have a name
+    -- In SNBT the root tag often does not have a name
     return {_type = module.TAGS.STRING, value = ''}, rootTag
 end
 
